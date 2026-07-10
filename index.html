@@ -167,11 +167,13 @@ footer a { color: var(--text-secondary); }
         <th data-k="admit">等住院 <span class="arr">▼</span></th>
         <th data-k="icu">等 ICU</th>
         <th data-k="full">119 滿床</th>
+        <th data-k="b48" id="b48Head">暫留逾48h比率 †</th>
       </tr></thead>
       <tbody></tbody>
     </table>
   </div>
   <p class="desc" style="margin-top:8px">* 推床數各院填報標準不一，實務上不可靠，僅供參考。空白（—）表示該院該欄未回報。</p>
+  <p class="desc" id="b48Note">† 健保署醫療品質指標「急診轉住院暫留急診超過四十八小時案件比率」（季資料）。— 表示無資料或與總院合併申報；<strong>粗體</strong>為高於全國平均。</p>
 </div>
 
 <div class="card">
@@ -225,6 +227,7 @@ const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(
 
 const state = {
   latest: null,        // data/latest.json
+  boarding: null,      // data/boarding48.json（季指標：暫留逾48小時比率）
   days: [],            // available day strings
   dayCache: new Map(), // date -> day file json
   rangeHours: 72,
@@ -439,8 +442,10 @@ function renderTable() {
 
   let rows = Object.keys(hosp).map(hid => {
     const [see, bed, admit, icu, full] = d[hid] || [null,null,null,null,0];
+    const b = state.boarding?.rates?.[hid];
     return { hid, name: hosp[hid].n, areaCode: hosp[hid].a, area: AREA_NAMES[hosp[hid].a] || hosp[hid].a,
-             typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full };
+             typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full,
+             b48: b ? b.r : null, b48n: b?.n, b48d: b?.d };
   });
   if (areaF) rows = rows.filter(r => r.areaCode === areaF);
   if (typeF) rows = rows.filter(r => r.typeCode === typeF);
@@ -465,6 +470,11 @@ function renderTable() {
       <td class="num"><strong>${num(r.admit)}</strong></td>
       <td class="num">${num(r.icu)}</td>
       <td>${r.full ? '<span class="badge119">🔴 已通報</span>' : ""}</td>
+      <td class="num" ${r.b48n ? `title="${r.b48n}/${r.b48d} 件"` : ""}>${
+        r.b48 == null ? '<span class="muted">—</span>'
+        : (state.boarding?.national != null && r.b48 > state.boarding.national)
+          ? `<strong>${r.b48.toFixed(1)}%</strong>` : `${r.b48.toFixed(1)}%`
+      }</td>
     </tr>`).join("");
 
   document.querySelectorAll("#tbl thead th").forEach(th => {
@@ -528,10 +538,20 @@ async function loadLatest() {
 
 async function init() {
   try {
-    [state.days] = await Promise.all([fetchJSON("data/days.json"), loadLatest()]);
+    [state.days] = await Promise.all([
+      fetchJSON("data/days.json"),
+      fetchJSON("data/boarding48.json").then(b => { state.boarding = b; }).catch(() => {}),
+      loadLatest(),
+    ]);
   } catch (e) {
     document.getElementById("updated").textContent = "資料載入失敗：" + e.message;
     return;
+  }
+  if (state.boarding) {
+    document.getElementById("b48Head").innerHTML = `暫留逾48h比率（${state.boarding.quarter}）†`;
+    document.getElementById("b48Note").innerHTML =
+      `† 健保署醫療品質指標「急診轉住院暫留急診超過四十八小時案件比率」，${state.boarding.quarter} 季資料，全國平均 ${state.boarding.national}%；` +
+      `<strong>粗體</strong>為高於全國平均，— 表示無資料或與總院合併申報。滑鼠停留可見 件數/分母。`;
   }
   // 地區選單（預設新北市）
   const areas = [...new Set(Object.values(state.latest.hosp).map(h => h.a))]
