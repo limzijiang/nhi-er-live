@@ -5,12 +5,16 @@
 API: POST https://info.nhi.gov.tw/api/inae4000/inae4001s01/SQL0002
 """
 import json
+import ssl
 import sys
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 API_URL = "https://info.nhi.gov.tw/api/inae4000/inae4001s01/SQL0002"
+# 新北市立聯合醫院（三重院區，中度級急救責任醫院）院方公開觀測站
+NTCH_URL = "https://reg.ntch.ntpc.gov.tw:8747/api/Emergency/stats"
+NTCH_ID = "0131020016"  # 健保院所代碼（與季指標 boarding48 相通）
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 HISTORY_DIR = DATA_DIR / "history"
@@ -31,6 +35,19 @@ def fetch(retries=3):
         except Exception as e:  # noqa: BLE001
             last_err = e
     raise SystemExit(f"API fetch failed after {retries} tries: {last_err}")
+
+
+def fetch_ntch():
+    """三重聯醫觀測站；站點自簽憑證且偶有不穩，失敗回 None 不影響主資料。"""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(NTCH_URL, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            return json.loads(resp.read())
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def to_int(v):
@@ -69,6 +86,20 @@ def main():
             to_int(h.get("waiT_ICU_CNT")),
             1 if h.get("inform") == "Y" else 0,
         ]
+
+    # 三重聯醫（中度級，非健保署來源）：一律保留在名單中，抓不到時值為 null
+    hosp_meta[NTCH_ID] = {"n": "三重聯醫", "a": "31", "t": "2"}
+    ntch = fetch_ntch()
+    if ntch:
+        values[NTCH_ID] = [
+            to_int(ntch.get("waitingForConsultation")),
+            to_int(ntch.get("waitingForBed")),
+            to_int(ntch.get("waitingForAdmission")),
+            to_int(ntch.get("waitingForICU")),
+            1 if ntch.get("fullBedReported") else 0,
+        ]
+    else:
+        values[NTCH_ID] = [None, None, None, None, 0]
 
     fetched_at = datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
 

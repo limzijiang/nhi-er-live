@@ -173,6 +173,7 @@ footer a { color: var(--text-secondary); }
     </table>
   </div>
   <p class="desc" style="margin-top:8px">* 推床數各院填報標準不一，實務上不可靠，僅供參考。空白（—）表示該院該欄未回報。</p>
+  <p class="desc">三重聯醫為中度級急救責任醫院，不在健保署重度級名單內，資料來自<a href="https://reg.ntch.ntpc.gov.tw:8747/" target="_blank" rel="noopener">院方急診公開資訊觀測站</a>，填報頻率與品質可能與重度級醫院不同。</p>
   <p class="desc" id="b48Note">† 健保署醫療品質指標「急診轉住院暫留急診超過四十八小時案件比率」（季資料）。— 表示無資料或與總院合併申報；<strong>粗體</strong>為高於全國平均。</p>
 </div>
 
@@ -447,7 +448,7 @@ function renderTable() {
              typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full,
              b48: b ? b.r : null, b48n: b?.n, b48d: b?.d };
   });
-  const FJU_NEARBY = ["輔大", "亞東", "林口長庚", "土城醫院"]; // 輔大周邊
+  const FJU_NEARBY = ["輔大", "亞東", "林口長庚", "土城醫院", "三重聯醫"]; // 輔大周邊
   if (areaF === "__fju") rows = rows.filter(r => FJU_NEARBY.includes(r.name));
   else if (areaF) rows = rows.filter(r => r.areaCode === areaF);
   if (typeF) rows = rows.filter(r => r.typeCode === typeF);
