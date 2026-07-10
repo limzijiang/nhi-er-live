@@ -44,16 +44,24 @@ def fetch(retries=5):
 
 
 def fetch_ntch():
-    """三重聯醫觀測站；站點自簽憑證且偶有不穩，失敗回 None 不影響主資料。"""
+    """三重聯醫觀測站；站點憑證與 TLS 較舊，失敗回 None 不影響主資料。"""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    req = urllib.request.Request(NTCH_URL, headers={"User-Agent": "Mozilla/5.0"})
+    ctx.options |= 0x4  # SSL_OP_LEGACY_SERVER_CONNECT（舊式 IIS 相容）
     try:
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            return json.loads(resp.read())
-    except Exception:  # noqa: BLE001
-        return None
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    req = urllib.request.Request(NTCH_URL, headers={"User-Agent": "Mozilla/5.0"})
+    for i in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+                return json.loads(resp.read())
+        except Exception as e:  # noqa: BLE001
+            print(f"ntch fetch attempt {i+1} failed: {e!r}", file=sys.stderr)
+            time.sleep(3)
+    return None
 
 
 def to_int(v):
