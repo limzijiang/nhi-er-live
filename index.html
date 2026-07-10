@@ -147,7 +147,7 @@ footer a { color: var(--text-secondary); }
   <h2>即時各院狀態</h2>
   <p class="desc" id="tableDesc">點欄位標題可排序；點醫院名稱可看趨勢圖</p>
   <div class="controls">
-    <select id="areaFilter"><option value="">全部地區</option><option value="__fju">輔大周邊</option></select>
+    <select id="areaFilter"><option value="">全部地區</option><option value="__fju">輔大周邊</option><option value="__tpe">雙北地區</option></select>
     <select id="typeFilter">
       <option value="">全部層級</option>
       <option value="1">醫學中心</option>
@@ -197,6 +197,19 @@ footer a { color: var(--text-secondary); }
 </div>
 
 <div class="card">
+  <h2>區域趨勢</h2>
+  <p class="desc">區域內醫院的等住院、等 ICU 人數加總（時間範圍同上方選擇）</p>
+  <div class="controls">
+    <select id="regionSelect" aria-label="選擇區域"><option value="__fju">輔大周邊</option><option value="__tpe">雙北地區</option><option value="">全部地區</option></select>
+  </div>
+  <div class="legend">
+    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
+    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
+  </div>
+  <div class="chart-box" id="regionChart"></div>
+</div>
+
+<div class="card">
   <h2>全國壅塞趨勢</h2>
   <p class="desc">全部重度級醫院的等住院、等 ICU 人數加總（時間範圍同上方選擇）</p>
   <div class="legend">
@@ -224,6 +237,14 @@ const AREA_NAMES = {
   "46":"臺東縣","90":"金門縣","91":"連江縣"
 };
 const TYPE_NAMES = {"1":"醫學中心","2":"區域醫院","3":"地區醫院"};
+const FJU_NEARBY = ["輔大", "亞東", "林口長庚", "土城醫院", "三重聯醫", "部立臺北"]; // 輔大周邊
+// 分類：值 -> 判斷函式（meta = {n:名稱, a:地區代碼}）
+function groupMatch(sel, meta) {
+  if (!sel) return true;
+  if (sel === "__fju") return FJU_NEARBY.includes(meta.n);
+  if (sel === "__tpe") return meta.a === "01" || meta.a === "31"; // 雙北地區
+  return meta.a === sel;
+}
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 const state = {
@@ -448,9 +469,7 @@ function renderTable() {
              typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full,
              b48: b ? b.r : null, b48n: b?.n, b48d: b?.d };
   });
-  const FJU_NEARBY = ["輔大", "亞東", "林口長庚", "土城醫院", "三重聯醫"]; // 輔大周邊
-  if (areaF === "__fju") rows = rows.filter(r => FJU_NEARBY.includes(r.name));
-  else if (areaF) rows = rows.filter(r => r.areaCode === areaF);
+  if (areaF) rows = rows.filter(r => groupMatch(areaF, { n: r.name, a: r.areaCode }));
   if (typeF) rows = rows.filter(r => r.typeCode === typeF);
   if (q) rows = rows.filter(r => r.name.includes(q));
 
@@ -528,6 +547,27 @@ async function renderCharts() {
     { name: "等住院", color: c1, points: downsample(hAdmit) },
     { name: "等ICU", color: c2, points: downsample(hIcu) },
   ], { label: (hospMeta[hid]?.n || "") + " 等住院與等ICU趨勢" });
+
+  // 區域加總
+  const regSel = document.getElementById("regionSelect").value;
+  const meta = hid2 => hospMeta[hid2] || state.latest.hosp[hid2];
+  const regAdmit = [], regIcu = [];
+  for (const s of snaps) {
+    let a = 0, i = 0, any = false;
+    for (const h2 in s.d) {
+      const m = meta(h2);
+      if (!m || !groupMatch(regSel, m)) continue;
+      const v = s.d[h2];
+      if (v[2] != null) { a += v[2]; any = true; }
+      if (v[3] != null) i += v[3];
+    }
+    regAdmit.push({ x: s.ts, y: any ? a : null });
+    regIcu.push({ x: s.ts, y: any ? i : null });
+  }
+  renderLineChart(document.getElementById("regionChart"), [
+    { name: "等住院", color: c1, points: downsample(regAdmit) },
+    { name: "等ICU", color: c2, points: downsample(regIcu) },
+  ], { label: "區域等住院與等ICU人數趨勢" });
 }
 
 // ---------- 初始化 ----------
@@ -576,12 +616,13 @@ async function init() {
       `† 健保署醫療品質指標「急診轉住院暫留急診超過四十八小時案件比率」，${state.boarding.quarter} 季資料，全國平均 ${state.boarding.national}%；` +
       `<strong>粗體</strong>為高於全國平均，— 表示無資料或與總院合併申報。滑鼠停留可見 件數/分母。`;
   }
-  // 地區選單（預設新北市）
+  // 地區選單（表格預設輔大周邊；區域趨勢選單同步加入各縣市）
   const areas = [...new Set(Object.values(state.latest.hosp).map(h => h.a))]
     .sort().map(a => `<option value="${a}">${AREA_NAMES[a] || a}</option>`);
   const areaSel = document.getElementById("areaFilter");
   areaSel.insertAdjacentHTML("beforeend", areas.join(""));
-  if ([...areaSel.options].some(o => o.value === "31")) areaSel.value = "31";
+  areaSel.value = "__fju";
+  document.getElementById("regionSelect").insertAdjacentHTML("beforeend", areas.join(""));
   renderTable();
 
   // 醫院趨勢預設輔大
@@ -599,6 +640,7 @@ async function init() {
   document.getElementById("hospSelect").addEventListener("change", e => {
     state.hospId = e.target.value; renderCharts();
   });
+  document.getElementById("regionSelect").addEventListener("change", renderCharts);
   ["areaFilter", "typeFilter"].forEach(id =>
     document.getElementById(id).addEventListener("change", renderTable));
   document.getElementById("searchBox").addEventListener("input", renderTable);
