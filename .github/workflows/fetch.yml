@@ -2,7 +2,8 @@ name: Fetch ER data
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # 避開整刻鐘尖峰（GitHub 在 :00/:15/:30/:45 常延遲或丟棄排程）
+    - cron: "6,21,36,51 * * * *"
   workflow_dispatch:
 
 permissions:
