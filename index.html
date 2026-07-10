@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>台灣急診即時壅塞看板</title>
+<meta name="description" content="全國重度級急救責任醫院急診即時與歷史壅塞資料（健保署公開 API，每 15 分鐘更新）">
+<style>
+:root {
+  --page:           #f9f9f7;
+  --surface-1:      #fcfcfb;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --grid:           #e1e0d9;
+  --baseline:       #c3c2b7;
+  --border:         rgba(11,11,11,0.10);
+  --series-1:       #2a78d6;  /* 等住院 */
+  --series-2:       #1baf7a;  /* 等ICU */
+  --critical:       #d03b3b;
+  --critical-bg:    rgba(208,59,59,0.08);
+  --chip-hover:     rgba(11,11,11,0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #199e70;
+    --critical:       #d03b3b;
+    --critical-bg:    rgba(208,59,59,0.16);
+    --chip-hover:     rgba(255,255,255,0.07);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  line-height: 1.5;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+header h1 { font-size: 1.35rem; margin: 0 0 2px; }
+header .sub { color: var(--text-secondary); font-size: .85rem; }
+header .sub a { color: inherit; }
+.updated { color: var(--text-muted); font-size: .8rem; margin-top: 4px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 18px 0; }
+.tile {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px;
+}
+.tile .label { font-size: .78rem; color: var(--text-secondary); }
+.tile .value { font-size: 1.7rem; font-weight: 650; margin-top: 2px; }
+.tile .note { font-size: .72rem; color: var(--text-muted); }
+.tile.crit .value { color: var(--critical); }
+
+.alerts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.alert-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--critical-bg); border: 1px solid var(--critical);
+  color: var(--critical); border-radius: 999px; padding: 3px 12px; font-size: .82rem; font-weight: 600;
+}
+
+.card {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; margin-bottom: 18px;
+}
+.card h2 { font-size: 1rem; margin: 0 0 2px; }
+.card .desc { font-size: .8rem; color: var(--text-secondary); margin: 0 0 10px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button {
+  border: 0; background: transparent; color: var(--text-secondary);
+  padding: 5px 12px; font-size: .82rem; cursor: pointer; font-family: inherit;
+}
+.seg button:hover { background: var(--chip-hover); }
+.seg button.on { background: var(--text-primary); color: var(--page); font-weight: 600; }
+select, input[type="search"] {
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px;
+  font-size: .85rem; font-family: inherit; max-width: 240px;
+}
+
+.legend { display: flex; gap: 16px; font-size: .8rem; color: var(--text-secondary); margin: 4px 0 2px; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+
+.chart-box { position: relative; }
+.chart-box svg { display: block; width: 100%; height: auto; }
+.tooltip {
+  position: absolute; pointer-events: none; display: none;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15);
+  padding: 6px 10px; font-size: .78rem; white-space: nowrap; z-index: 5;
+}
+.tooltip .t { color: var(--text-muted); }
+.tooltip .row { display: flex; align-items: center; gap: 6px; }
+.tooltip .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.tooltip .v { font-weight: 650; font-variant-numeric: tabular-nums; margin-left: auto; padding-left: 10px; }
+.empty { color: var(--text-muted); font-size: .85rem; padding: 24px 0; text-align: center; }
+
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+th, td { padding: 6px 10px; text-align: right; white-space: nowrap; }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
+thead th {
+  color: var(--text-secondary); font-weight: 600; border-bottom: 1px solid var(--baseline);
+  cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface-1);
+}
+thead th .arr { font-size: .7em; color: var(--text-muted); }
+tbody tr { border-bottom: 1px solid var(--grid); }
+tbody tr:hover { background: var(--chip-hover); }
+td.num { font-variant-numeric: tabular-nums; }
+.badge119 {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--critical); font-weight: 650; font-size: .78rem;
+}
+.muted { color: var(--text-muted); }
+.hosp-link { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--text-muted); cursor: pointer; }
+
+footer { color: var(--text-muted); font-size: .76rem; margin-top: 28px; }
+footer a { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>台灣急診即時壅塞看板</h1>
+  <div class="sub">全國重度級急救責任醫院 · 資料來源：<a href="https://info.nhi.gov.tw/INAE4000/INAE4001S01" target="_blank" rel="noopener">衛福部健保署急診即時訊息</a> · 每 15 分鐘更新</div>
+  <div class="updated" id="updated">載入中…</div>
+</header>
+
+<div class="tiles" id="tiles"></div>
+<div class="alerts" id="alerts"></div>
+
+<div class="card">
+  <h2>全國壅塞趨勢</h2>
+  <p class="desc">全部重度級醫院的等住院、等 ICU 人數加總</p>
+  <div class="controls">
+    <div class="seg" id="rangeSeg" role="group" aria-label="時間範圍">
+      <button data-h="24">24 小時</button>
+      <button data-h="72" class="on">3 天</button>
+      <button data-h="168">7 天</button>
+      <button data-h="720">30 天</button>
+    </div>
+  </div>
+  <div class="legend">
+    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
+    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
+  </div>
+  <div class="chart-box" id="nationalChart"></div>
+</div>
+
+<div class="card">
+  <h2>單一醫院趨勢</h2>
+  <p class="desc">選擇醫院查看歷史等住院 / 等 ICU 變化（時間範圍同上方選擇）</p>
+  <div class="controls">
+    <select id="hospSelect" aria-label="選擇醫院"></select>
+  </div>
+  <div class="legend">
+    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
+    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
+  </div>
+  <div class="chart-box" id="hospChart"></div>
+</div>
+
+<div class="card">
+  <h2>即時各院狀態</h2>
+  <p class="desc" id="tableDesc">點欄位標題可排序；點醫院名稱可看趨勢圖</p>
+  <div class="controls">
+    <select id="areaFilter"><option value="">全部地區</option></select>
+    <select id="typeFilter">
+      <option value="">全部層級</option>
+      <option value="1">醫學中心</option>
+      <option value="2">區域醫院</option>
+      <option value="3">地區醫院</option>
+    </select>
+    <input type="search" id="searchBox" placeholder="搜尋醫院…" aria-label="搜尋醫院">
+  </div>
+  <div class="tbl-wrap">
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="name">醫院</th>
+        <th data-k="area">地區</th>
+        <th data-k="type">層級</th>
+        <th data-k="see">等看診</th>
+        <th data-k="bed">推床 *</th>
+        <th data-k="admit">等住院 <span class="arr">▼</span></th>
+        <th data-k="icu">等 ICU</th>
+        <th data-k="full">119 滿床</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="desc" style="margin-top:8px">* 推床數各院填報標準不一，實務上不可靠，僅供參考。空白（—）表示該院該欄未回報。</p>
+</div>
+
+<footer>
+  資料為去識別化之機構層級統計，來源：衛生福利部中央健康保險署急診即時訊息（<a href="https://info.nhi.gov.tw/INAE4000/INAE4001S01" target="_blank" rel="noopener">即時看板</a>）。
+  作法參考 <a href="https://github.com/KJT125/Nhi-er-open-data" target="_blank" rel="noopener">KJT125/Nhi-er-open-data</a>。
+  本站每 15 分鐘由 GitHub Actions 自動抓取並累積歷史資料；數字僅供參考，實際狀況以各院及 119 為準。
+</footer>
+</div>
+
+<script>
+"use strict";
+const AREA_NAMES = {
+  "01":"臺北市","03":"臺中市","05":"臺南市","07":"高雄市",
+  "11":"基隆市","12":"新竹市","22":"嘉義市",
+  "31":"新北市","32":"桃園市","33":"新竹縣","34":"宜蘭縣",
+  "35":"苗栗縣","37":"彰化縣","38":"南投縣","39":"雲林縣",
+  "40":"嘉義縣","43":"屏東縣","44":"澎湖縣","45":"花蓮縣",
+  "46":"臺東縣","90":"金門縣","91":"連江縣"
+};
+const TYPE_NAMES = {"1":"醫學中心","2":"區域醫院","3":"地區醫院"};
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+const state = {
+  latest: null,        // data/latest.json
+  days: [],            // available day strings
+  dayCache: new Map(), // date -> day file json
+  rangeHours: 72,
+  hospId: null,
+  sortKey: "admit",
+  sortDir: -1,
+};
+
+async function fetchJSON(url) {
+  const r = await fetch(url + "?v=" + Date.now());
+  if (!r.ok) throw new Error(url + " -> " + r.status);
+  return r.json();
+}
+
+function parseTime(s) { // "2026-07-10 20:45" (台灣時間，直接以本地呈現)
+  const [d, t] = s.split(" ");
+  const [y, mo, da] = d.split("-").map(Number);
+  const [h, mi] = t.split(":").map(Number);
+  return new Date(y, mo - 1, da, h, mi).getTime();
+}
+const fmtTime = ts => {
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+// ---------- 資料載入 ----------
+async function loadRange(hours) {
+  const nDays = Math.ceil(hours / 24) + 1;
+  const wanted = state.days.slice(-nDays);
+  const files = await Promise.all(wanted.map(async d => {
+    if (!state.dayCache.has(d)) {
+      try { state.dayCache.set(d, await fetchJSON("data/history/" + d + ".json")); }
+      catch { state.dayCache.set(d, null); }
+    }
+    return state.dayCache.get(d);
+  }));
+  const snaps = [];
+  const hospMeta = {};
+  for (const f of files) {
+    if (!f) continue;
+    Object.assign(hospMeta, f.hosp);
+    for (const s of f.snaps) snaps.push({ ts: parseTime(s.t), d: s.d });
+  }
+  snaps.sort((a, b) => a.ts - b.ts);
+  const cutoff = Date.now() - hours * 3600 * 1000;
+  return { snaps: snaps.filter(s => s.ts >= cutoff), hospMeta };
+}
+
+function downsample(points, maxPoints = 400) {
+  if (points.length <= maxPoints) return points;
+  const bucketMs = Math.ceil((points[points.length-1].x - points[0].x) / maxPoints);
+  const out = [];
+  let bucket = [], bStart = points[0].x;
+  const flush = () => {
+    if (!bucket.length) return;
+    const ys = bucket.filter(p => p.y != null).map(p => p.y);
+    out.push({ x: bucket[Math.floor(bucket.length/2)].x, y: ys.length ? Math.round(ys.reduce((a,b)=>a+b,0)/ys.length) : null });
+    bucket = [];
+  };
+  for (const p of points) {
+    if (p.x - bStart > bucketMs) { flush(); bStart = p.x; }
+    bucket.push(p);
+  }
+  flush();
+  return out;
+}
+
+// ---------- SVG 折線圖 ----------
+function renderLineChart(container, seriesList, opts = {}) {
+  container.innerHTML = "";
+  const hasData = seriesList.some(s => s.points.some(p => p.y != null));
+  if (!hasData) { container.innerHTML = '<div class="empty">此範圍尚無歷史資料，資料每 15 分鐘累積一次，請稍後再來。</div>'; return; }
+
+  const W = 960, H = 300, m = { top: 14, right: 90, bottom: 28, left: 46 };
+  const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
+
+  const allPts = seriesList.flatMap(s => s.points).filter(p => p.y != null);
+  const x0 = Math.min(...allPts.map(p => p.x)), x1 = Math.max(...allPts.map(p => p.x));
+  let yMax = Math.max(...allPts.map(p => p.y), 1);
+  yMax = Math.ceil(yMax * 1.08);
+  const X = x => m.left + (x1 === x0 ? iw/2 : (x - x0) / (x1 - x0) * iw);
+  const Y = y => m.top + ih - y / yMax * ih;
+
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", opts.label || "折線圖");
+
+  const el = (tag, attrs, parent) => {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(e); return e;
+  };
+
+  // y 格線與刻度
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = Math.round(yMax / yTicks * i), y = Y(v);
+    el("line", { x1: m.left, x2: m.left + iw, y1: y, y2: y, stroke: i === 0 ? cssVar("--baseline") : cssVar("--grid"), "stroke-width": 1 });
+    const t = el("text", { x: m.left - 8, y: y + 4, "text-anchor": "end", "font-size": 11, fill: cssVar("--text-muted") });
+    t.textContent = v;
+  }
+  // x 刻度（避免單一時間點重複標示）
+  const xTicks = 5;
+  const seen = new Set();
+  for (let i = 0; i <= xTicks; i++) {
+    const ts = x0 + (x1 - x0) / xTicks * i;
+    const lbl = fmtTime(ts);
+    if (seen.has(lbl)) continue;
+    seen.add(lbl);
+    const t = el("text", { x: X(ts), y: H - 8, "text-anchor": "middle", "font-size": 11, fill: cssVar("--text-muted") });
+    t.textContent = lbl;
+  }
+
+  // 線 + 直接標籤
+  for (const s of seriesList) {
+    let dStr = "", pen = false;
+    for (const p of s.points) {
+      if (p.y == null) { pen = false; continue; }
+      dStr += (pen ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.y).toFixed(1);
+      pen = true;
+    }
+    el("path", { d: dStr, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    // 孤立點（前後皆無資料）畫成圓點，否則看不見
+    s.points.forEach((p, i) => {
+      if (p.y == null) return;
+      const prev = s.points[i-1], next = s.points[i+1];
+      if ((prev == null || prev.y == null) && (next == null || next.y == null))
+        el("circle", { cx: X(p.x), cy: Y(p.y), r: 3, fill: s.color });
+    });
+    const lastPt = [...s.points].reverse().find(p => p.y != null);
+    if (lastPt) {
+      const t = el("text", { x: m.left + iw + 8, y: Y(lastPt.y) + 4, "font-size": 11.5, "font-weight": 600, fill: s.color });
+      t.textContent = `${s.name} ${lastPt.y}`;
+    }
+  }
+
+  // 十字游標 + tooltip
+  const cross = el("line", { y1: m.top, y2: m.top + ih, stroke: cssVar("--baseline"), "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden" });
+  const dots = seriesList.map(s => el("circle", { r: 4.5, fill: s.color, stroke: cssVar("--surface-1"), "stroke-width": 2, visibility: "hidden" }));
+  const tip = document.createElement("div");
+  tip.className = "tooltip";
+  container.appendChild(svg);
+  container.appendChild(tip);
+
+  const timeline = seriesList[0].points.map(p => p.x);
+  svg.addEventListener("pointermove", ev => {
+    const rect = svg.getBoundingClientRect();
+    const px = (ev.clientX - rect.left) / rect.width * W;
+    const target = x0 + (px - m.left) / iw * (x1 - x0);
+    let best = 0, bd = Infinity;
+    timeline.forEach((t, i) => { const d = Math.abs(t - target); if (d < bd) { bd = d; best = i; } });
+    const ts = timeline[best];
+    cross.setAttribute("x1", X(ts)); cross.setAttribute("x2", X(ts));
+    cross.setAttribute("visibility", "visible");
+    let html = `<div class="t">${fmtTime(ts)}</div>`;
+    seriesList.forEach((s, i) => {
+      const p = s.points[best];
+      if (p && p.y != null) {
+        dots[i].setAttribute("cx", X(p.x)); dots[i].setAttribute("cy", Y(p.y));
+        dots[i].setAttribute("visibility", "visible");
+        html += `<div class="row"><span class="dot" style="background:${s.color}"></span>${s.name}<span class="v">${p.y}</span></div>`;
+      } else dots[i].setAttribute("visibility", "hidden");
+    });
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    const bx = (X(ts) / W) * rect.width;
+    tip.style.left = Math.min(bx + 12, rect.width - tip.offsetWidth - 4) + "px";
+    tip.style.top = "10px";
+  });
+  svg.addEventListener("pointerleave", () => {
+    cross.setAttribute("visibility", "hidden");
+    dots.forEach(d => d.setAttribute("visibility", "hidden"));
+    tip.style.display = "none";
+  });
+}
+
+// ---------- 畫面區塊 ----------
+function renderTiles() {
+  const { d, hosp } = state.latest;
+  let admit = 0, icu = 0, full = 0, reporting = 0;
+  for (const hid in d) {
+    const [see, bed, ad, ic, fl] = d[hid];
+    if (ad != null) admit += ad;
+    if (ic != null) icu += ic;
+    if (fl) full++;
+    if (see != null || ad != null) reporting++;
+  }
+  const total = Object.keys(hosp).length;
+  document.getElementById("tiles").innerHTML = `
+    <div class="tile"><div class="label">全國等住院</div><div class="value">${admit}</div><div class="note">人</div></div>
+    <div class="tile"><div class="label">全國等 ICU</div><div class="value">${icu}</div><div class="note">人</div></div>
+    <div class="tile ${full ? "crit" : ""}"><div class="label">119 滿床通報</div><div class="value">${full}</div><div class="note">家醫院</div></div>
+    <div class="tile"><div class="label">回報醫院</div><div class="value">${reporting}<span style="font-size:.55em;color:var(--text-muted)"> / ${total}</span></div><div class="note">家</div></div>`;
+
+  const chips = Object.entries(state.latest.d)
+    .filter(([, v]) => v[4])
+    .map(([hid]) => {
+      const h = hosp[hid];
+      return `<span class="alert-chip">🔴 ${h ? h.n : hid}（${AREA_NAMES[h?.a] || ""}）119 滿床</span>`;
+    });
+  document.getElementById("alerts").innerHTML = chips.join("");
+}
+
+function renderTable() {
+  const { d, hosp } = state.latest;
+  const areaF = document.getElementById("areaFilter").value;
+  const typeF = document.getElementById("typeFilter").value;
+  const q = document.getElementById("searchBox").value.trim();
+
+  let rows = Object.keys(hosp).map(hid => {
+    const [see, bed, admit, icu, full] = d[hid] || [null,null,null,null,0];
+    return { hid, name: hosp[hid].n, areaCode: hosp[hid].a, area: AREA_NAMES[hosp[hid].a] || hosp[hid].a,
+             typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full };
+  });
+  if (areaF) rows = rows.filter(r => r.areaCode === areaF);
+  if (typeF) rows = rows.filter(r => r.typeCode === typeF);
+  if (q) rows = rows.filter(r => r.name.includes(q));
+
+  const k = state.sortKey, dir = state.sortDir;
+  rows.sort((a, b) => {
+    let va = a[k], vb = b[k];
+    if (typeof va === "string") return va.localeCompare(vb, "zh-Hant") * dir;
+    va = va == null ? -1 : va; vb = vb == null ? -1 : vb;
+    return (va - vb) * dir;
+  });
+
+  const num = v => v == null ? '<span class="muted">—</span>' : v;
+  document.querySelector("#tbl tbody").innerHTML = rows.map(r => `
+    <tr>
+      <td><span class="hosp-link" data-hid="${r.hid}">${r.name}</span></td>
+      <td>${r.area}</td>
+      <td>${r.type}</td>
+      <td class="num">${num(r.see)}</td>
+      <td class="num muted">${num(r.bed)}</td>
+      <td class="num"><strong>${num(r.admit)}</strong></td>
+      <td class="num">${num(r.icu)}</td>
+      <td>${r.full ? '<span class="badge119">🔴 已通報</span>' : ""}</td>
+    </tr>`).join("");
+
+  document.querySelectorAll("#tbl thead th").forEach(th => {
+    const arr = th.querySelector(".arr") || Object.assign(document.createElement("span"), { className: "arr" });
+    if (!th.contains(arr)) th.appendChild(arr);
+    arr.textContent = th.dataset.k === k ? (dir === -1 ? " ▼" : " ▲") : "";
+  });
+  document.getElementById("tableDesc").textContent =
+    `共 ${rows.length} 家 · 點欄位標題可排序；點醫院名稱可看趨勢圖`;
+}
+
+async function renderCharts() {
+  const { snaps, hospMeta } = await loadRange(state.rangeHours);
+  const c1 = cssVar("--series-1"), c2 = cssVar("--series-2");
+
+  // 全國加總
+  const natAdmit = [], natIcu = [];
+  for (const s of snaps) {
+    let a = 0, i = 0, any = false;
+    for (const hid in s.d) {
+      const v = s.d[hid];
+      if (v[2] != null) { a += v[2]; any = true; }
+      if (v[3] != null) i += v[3];
+    }
+    natAdmit.push({ x: s.ts, y: any ? a : null });
+    natIcu.push({ x: s.ts, y: any ? i : null });
+  }
+  renderLineChart(document.getElementById("nationalChart"), [
+    { name: "等住院", color: c1, points: downsample(natAdmit) },
+    { name: "等ICU", color: c2, points: downsample(natIcu) },
+  ], { label: "全國等住院與等ICU人數趨勢" });
+
+  // 單一醫院
+  const sel = document.getElementById("hospSelect");
+  if (!sel.options.length) {
+    const latest = state.latest;
+    const ids = Object.keys(latest.hosp)
+      .sort((a, b) => ((latest.d[b]?.[2]) ?? -1) - ((latest.d[a]?.[2]) ?? -1));
+    sel.innerHTML = ids.map(hid =>
+      `<option value="${hid}">${latest.hosp[hid].n}（${AREA_NAMES[latest.hosp[hid].a] || ""}）</option>`).join("");
+    state.hospId = state.hospId || ids[0];
+    sel.value = state.hospId;
+  }
+  const hid = state.hospId;
+  const hAdmit = snaps.map(s => ({ x: s.ts, y: s.d[hid] ? s.d[hid][2] : null }));
+  const hIcu   = snaps.map(s => ({ x: s.ts, y: s.d[hid] ? s.d[hid][3] : null }));
+  renderLineChart(document.getElementById("hospChart"), [
+    { name: "等住院", color: c1, points: downsample(hAdmit) },
+    { name: "等ICU", color: c2, points: downsample(hIcu) },
+  ], { label: (hospMeta[hid]?.n || "") + " 等住院與等ICU趨勢" });
+}
+
+// ---------- 初始化 ----------
+async function loadLatest() {
+  state.latest = await fetchJSON("data/latest.json");
+  document.getElementById("updated").textContent =
+    `資料時間：${state.latest.sysdate}（每 15 分鐘更新，頁面每 5 分鐘自動重新整理數據）`;
+  renderTiles();
+  renderTable();
+}
+
+async function init() {
+  try {
+    [state.days] = await Promise.all([fetchJSON("data/days.json"), loadLatest()]);
+  } catch (e) {
+    document.getElementById("updated").textContent = "資料載入失敗：" + e.message;
+    return;
+  }
+  // 地區選單
+  const areas = [...new Set(Object.values(state.latest.hosp).map(h => h.a))]
+    .sort().map(a => `<option value="${a}">${AREA_NAMES[a] || a}</option>`);
+  document.getElementById("areaFilter").insertAdjacentHTML("beforeend", areas.join(""));
+
+  await renderCharts();
+
+  document.getElementById("rangeSeg").addEventListener("click", e => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    document.querySelectorAll("#rangeSeg button").forEach(b => b.classList.toggle("on", b === btn));
+    state.rangeHours = Number(btn.dataset.h);
+    renderCharts();
+  });
+  document.getElementById("hospSelect").addEventListener("change", e => {
+    state.hospId = e.target.value; renderCharts();
+  });
+  ["areaFilter", "typeFilter"].forEach(id =>
+    document.getElementById(id).addEventListener("change", renderTable));
+  document.getElementById("searchBox").addEventListener("input", renderTable);
+  document.querySelector("#tbl thead").addEventListener("click", e => {
+    const th = e.target.closest("th"); if (!th) return;
+    const k = th.dataset.k;
+    if (state.sortKey === k) state.sortDir *= -1;
+    else { state.sortKey = k; state.sortDir = k === "name" || k === "area" || k === "type" ? 1 : -1; }
+    renderTable();
+  });
+  document.querySelector("#tbl tbody").addEventListener("click", e => {
+    const link = e.target.closest(".hosp-link"); if (!link) return;
+    state.hospId = link.dataset.hid;
+    document.getElementById("hospSelect").value = state.hospId;
+    renderCharts();
+    document.getElementById("hospChart").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+
+  // 每 5 分鐘更新即時資料；每 15 分鐘更新圖表
+  setInterval(() => loadLatest().catch(() => {}), 5 * 60 * 1000);
+  setInterval(() => {
+    state.dayCache.clear();
+    fetchJSON("data/days.json").then(d => { state.days = d; return renderCharts(); }).catch(() => {});
+  }, 15 * 60 * 1000);
+}
+init();
+</script>
+</body>
+</html>
