@@ -144,37 +144,6 @@ footer a { color: var(--text-secondary); }
 <div class="alerts" id="alerts"></div>
 
 <div class="card">
-  <h2>全國壅塞趨勢</h2>
-  <p class="desc">全部重度級醫院的等住院、等 ICU 人數加總</p>
-  <div class="controls">
-    <div class="seg" id="rangeSeg" role="group" aria-label="時間範圍">
-      <button data-h="24">24 小時</button>
-      <button data-h="72" class="on">3 天</button>
-      <button data-h="168">7 天</button>
-      <button data-h="720">30 天</button>
-    </div>
-  </div>
-  <div class="legend">
-    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
-    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
-  </div>
-  <div class="chart-box" id="nationalChart"></div>
-</div>
-
-<div class="card">
-  <h2>單一醫院趨勢</h2>
-  <p class="desc">選擇醫院查看歷史等住院 / 等 ICU 變化（時間範圍同上方選擇）</p>
-  <div class="controls">
-    <select id="hospSelect" aria-label="選擇醫院"></select>
-  </div>
-  <div class="legend">
-    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
-    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
-  </div>
-  <div class="chart-box" id="hospChart"></div>
-</div>
-
-<div class="card">
   <h2>即時各院狀態</h2>
   <p class="desc" id="tableDesc">點欄位標題可排序；點醫院名稱可看趨勢圖</p>
   <div class="controls">
@@ -203,6 +172,35 @@ footer a { color: var(--text-secondary); }
     </table>
   </div>
   <p class="desc" style="margin-top:8px">* 推床數各院填報標準不一，實務上不可靠，僅供參考。空白（—）表示該院該欄未回報。</p>
+</div>
+
+<div class="card">
+  <h2>單一醫院趨勢</h2>
+  <p class="desc">選擇醫院查看歷史等住院 / 等 ICU 變化</p>
+  <div class="controls">
+    <select id="hospSelect" aria-label="選擇醫院"></select>
+    <div class="seg" id="rangeSeg" role="group" aria-label="時間範圍">
+      <button data-h="24">24 小時</button>
+      <button data-h="72" class="on">3 天</button>
+      <button data-h="168">7 天</button>
+      <button data-h="720">30 天</button>
+    </div>
+  </div>
+  <div class="legend">
+    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
+    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
+  </div>
+  <div class="chart-box" id="hospChart"></div>
+</div>
+
+<div class="card">
+  <h2>全國壅塞趨勢</h2>
+  <p class="desc">全部重度級醫院的等住院、等 ICU 人數加總（時間範圍同上方選擇）</p>
+  <div class="legend">
+    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
+    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
+  </div>
+  <div class="chart-box" id="nationalChart"></div>
 </div>
 
 <footer>
@@ -535,10 +533,17 @@ async function init() {
     document.getElementById("updated").textContent = "資料載入失敗：" + e.message;
     return;
   }
-  // 地區選單
+  // 地區選單（預設新北市）
   const areas = [...new Set(Object.values(state.latest.hosp).map(h => h.a))]
     .sort().map(a => `<option value="${a}">${AREA_NAMES[a] || a}</option>`);
-  document.getElementById("areaFilter").insertAdjacentHTML("beforeend", areas.join(""));
+  const areaSel = document.getElementById("areaFilter");
+  areaSel.insertAdjacentHTML("beforeend", areas.join(""));
+  if ([...areaSel.options].some(o => o.value === "31")) areaSel.value = "31";
+  renderTable();
+
+  // 醫院趨勢預設輔大
+  state.hospId = Object.keys(state.latest.hosp)
+    .find(h => state.latest.hosp[h].n.includes("輔大")) || null;
 
   await renderCharts();
 
