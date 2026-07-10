@@ -7,6 +7,7 @@ API: POST https://info.nhi.gov.tw/api/inae4000/inae4001s01/SQL0002
 import json
 import ssl
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -21,19 +22,24 @@ HISTORY_DIR = DATA_DIR / "history"
 TAIPEI = timezone(timedelta(hours=8))
 
 
-def fetch(retries=3):
+def fetch(retries=5):
     req = urllib.request.Request(
         API_URL,
         data=json.dumps({"AREA_NO": "", "CONT_TYPE": ""}).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) er-dashboard",
+            "Accept": "application/json",
+        },
     )
     last_err = None
-    for _ in range(retries):
+    for i in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read())
         except Exception as e:  # noqa: BLE001
             last_err = e
+            time.sleep(5 * (i + 1))
     raise SystemExit(f"API fetch failed after {retries} tries: {last_err}")
 
 
