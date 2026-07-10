@@ -17,6 +17,8 @@
   --border:         rgba(11,11,11,0.10);
   --series-1:       #2a78d6;  /* 等住院 */
   --series-2:       #1baf7a;  /* 等ICU */
+  --cat-1: #2a78d6; --cat-2: #1baf7a; --cat-3: #eda100; --cat-4: #008300;
+  --cat-5: #4a3aa7; --cat-6: #e34948; --cat-7: #e87ba4; --cat-8: #eb6834;
   --critical:       #d03b3b;
   --critical-bg:    rgba(208,59,59,0.08);
   --chip-hover:     rgba(11,11,11,0.05);
@@ -33,6 +35,8 @@
     --border:         rgba(255,255,255,0.10);
     --series-1:       #3987e5;
     --series-2:       #199e70;
+    --cat-1: #3987e5; --cat-2: #199e70; --cat-3: #c98500; --cat-4: #008300;
+    --cat-5: #9085e9; --cat-6: #e66767; --cat-7: #d55181; --cat-8: #d95926;
     --critical:       #d03b3b;
     --critical-bg:    rgba(208,59,59,0.16);
     --chip-hover:     rgba(255,255,255,0.07);
@@ -198,14 +202,15 @@ footer a { color: var(--text-secondary); }
 
 <div class="card">
   <h2>區域趨勢</h2>
-  <p class="desc">區域內醫院的等住院、等 ICU 人數加總（時間範圍同上方選擇）</p>
+  <p class="desc" id="regionDesc">同區域各醫院比較（時間範圍同上方選擇）</p>
   <div class="controls">
     <select id="regionSelect" aria-label="選擇區域"><option value="__fju">輔大周邊</option><option value="__tpe">雙北地區</option><option value="">全部地區</option></select>
+    <div class="seg" id="metricSeg" role="group" aria-label="比較指標">
+      <button data-m="2" class="on">等住院</button>
+      <button data-m="3">等 ICU</button>
+    </div>
   </div>
-  <div class="legend">
-    <span class="key"><span class="swatch" style="background:var(--series-1)"></span>等住院</span>
-    <span class="key"><span class="swatch" style="background:var(--series-2)"></span>等 ICU</span>
-  </div>
+  <div class="legend" id="regionLegend" style="flex-wrap:wrap"></div>
   <div class="chart-box" id="regionChart"></div>
 </div>
 
@@ -253,6 +258,7 @@ const state = {
   days: [],            // available day strings
   dayCache: new Map(), // date -> day file json
   rangeHours: 72,
+  regionMetric: 2,     // 區域比較指標：2=等住院, 3=等ICU
   hospId: null,
   sortKey: "admit",
   sortDir: -1,
@@ -324,7 +330,7 @@ function renderLineChart(container, seriesList, opts = {}) {
   const hasData = seriesList.some(s => s.points.some(p => p.y != null));
   if (!hasData) { container.innerHTML = '<div class="empty">此範圍尚無歷史資料，資料每 15 分鐘累積一次，請稍後再來。</div>'; return; }
 
-  const W = 960, H = 300, m = { top: 14, right: 90, bottom: 28, left: 46 };
+  const W = 960, H = 300, m = { top: 14, right: opts.rightPad || 90, bottom: 28, left: 46 };
   const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
 
   const allPts = seriesList.flatMap(s => s.points).filter(p => p.y != null);
@@ -366,7 +372,8 @@ function renderLineChart(container, seriesList, opts = {}) {
     t.textContent = lbl;
   }
 
-  // 線 + 直接標籤
+  // 線 + 直接標籤（標籤先收集，再做防重疊調整）
+  const endLabels = [];
   for (const s of seriesList) {
     let dStr = "", pen = false;
     for (const p of s.points) {
@@ -383,10 +390,16 @@ function renderLineChart(container, seriesList, opts = {}) {
         el("circle", { cx: X(p.x), cy: Y(p.y), r: 3, fill: s.color });
     });
     const lastPt = [...s.points].reverse().find(p => p.y != null);
-    if (lastPt) {
-      const t = el("text", { x: m.left + iw + 8, y: Y(lastPt.y) + 4, "font-size": 11.5, "font-weight": 600, fill: s.color });
-      t.textContent = `${s.name} ${lastPt.y}`;
-    }
+    if (lastPt) endLabels.push({ y: Y(lastPt.y), text: `${s.name} ${lastPt.y}`, color: s.color });
+  }
+  endLabels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < endLabels.length; i++)
+    if (endLabels[i].y - endLabels[i-1].y < 13) endLabels[i].y = endLabels[i-1].y + 13;
+  const overflow = endLabels.length ? endLabels[endLabels.length-1].y - (m.top + ih) : 0;
+  if (overflow > 0) for (const lb of endLabels) lb.y -= Math.min(overflow, Math.max(0, lb.y - m.top));
+  for (const lb of endLabels) {
+    const t = el("text", { x: m.left + iw + 8, y: lb.y + 4, "font-size": 11.5, "font-weight": 600, fill: lb.color });
+    t.textContent = lb.text;
   }
 
   // 十字游標 + tooltip
@@ -548,26 +561,28 @@ async function renderCharts() {
     { name: "等ICU", color: c2, points: downsample(hIcu) },
   ], { label: (hospMeta[hid]?.n || "") + " 等住院與等ICU趨勢" });
 
-  // 區域加總
+  // 區域比較：同區域各醫院各畫一條線
   const regSel = document.getElementById("regionSelect").value;
-  const meta = hid2 => hospMeta[hid2] || state.latest.hosp[hid2];
-  const regAdmit = [], regIcu = [];
-  for (const s of snaps) {
-    let a = 0, i = 0, any = false;
-    for (const h2 in s.d) {
-      const m = meta(h2);
-      if (!m || !groupMatch(regSel, m)) continue;
-      const v = s.d[h2];
-      if (v[2] != null) { a += v[2]; any = true; }
-      if (v[3] != null) i += v[3];
-    }
-    regAdmit.push({ x: s.ts, y: any ? a : null });
-    regIcu.push({ x: s.ts, y: any ? i : null });
-  }
-  renderLineChart(document.getElementById("regionChart"), [
-    { name: "等住院", color: c1, points: downsample(regAdmit) },
-    { name: "等ICU", color: c2, points: downsample(regIcu) },
-  ], { label: "區域等住院與等ICU人數趨勢" });
+  const mIdx = state.regionMetric; // 2=等住院, 3=等ICU
+  // 名單與顏色依「目前等住院」固定排序，切換指標不重新配色
+  const regIds = Object.keys(state.latest.hosp)
+    .filter(h2 => groupMatch(regSel, state.latest.hosp[h2]))
+    .sort((a, b) => ((state.latest.d[b]?.[2]) ?? -1) - ((state.latest.d[a]?.[2]) ?? -1));
+  const shown = regIds.slice(0, 8);
+  const catColor = i => cssVar(`--cat-${i + 1}`);
+  const regSeries = shown.map((h2, i) => ({
+    name: state.latest.hosp[h2].n,
+    color: catColor(i),
+    points: downsample(snaps.map(s => ({ x: s.ts, y: s.d[h2] ? s.d[h2][mIdx] : null }))),
+  }));
+  renderLineChart(document.getElementById("regionChart"), regSeries,
+    { label: "區域內各醫院" + (mIdx === 2 ? "等住院" : "等ICU") + "趨勢比較", rightPad: 130 });
+  document.getElementById("regionLegend").innerHTML = regSeries.map(s =>
+    `<span class="key"><span class="swatch" style="background:${s.color}"></span>${s.name}</span>`).join("");
+  document.getElementById("regionDesc").textContent =
+    regIds.length > shown.length
+      ? `同區域各醫院比較，顯示目前等住院最多的 ${shown.length} 家（共 ${regIds.length} 家）；時間範圍同上方選擇`
+      : "同區域各醫院比較（時間範圍同上方選擇）";
 }
 
 // ---------- 初始化 ----------
@@ -641,6 +656,12 @@ async function init() {
     state.hospId = e.target.value; renderCharts();
   });
   document.getElementById("regionSelect").addEventListener("change", renderCharts);
+  document.getElementById("metricSeg").addEventListener("click", e => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    document.querySelectorAll("#metricSeg button").forEach(b => b.classList.toggle("on", b === btn));
+    state.regionMetric = Number(btn.dataset.m);
+    renderCharts();
+  });
   ["areaFilter", "typeFilter"].forEach(id =>
     document.getElementById(id).addEventListener("change", renderTable));
   document.getElementById("searchBox").addEventListener("input", renderTable);
