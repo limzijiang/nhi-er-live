@@ -147,7 +147,7 @@ footer a { color: var(--text-secondary); }
   <h2>即時各院狀態</h2>
   <p class="desc" id="tableDesc">點欄位標題可排序；點醫院名稱可看趨勢圖</p>
   <div class="controls">
-    <select id="areaFilter"><option value="">全部地區</option></select>
+    <select id="areaFilter"><option value="">全部地區</option><option value="__fju">輔大周邊</option></select>
     <select id="typeFilter">
       <option value="">全部層級</option>
       <option value="1">醫學中心</option>
@@ -447,7 +447,9 @@ function renderTable() {
              typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full,
              b48: b ? b.r : null, b48n: b?.n, b48d: b?.d };
   });
-  if (areaF) rows = rows.filter(r => r.areaCode === areaF);
+  const FJU_NEARBY = ["輔大", "亞東", "林口長庚", "土城醫院"]; // 輔大周邊
+  if (areaF === "__fju") rows = rows.filter(r => FJU_NEARBY.includes(r.name));
+  else if (areaF) rows = rows.filter(r => r.areaCode === areaF);
   if (typeF) rows = rows.filter(r => r.typeCode === typeF);
   if (q) rows = rows.filter(r => r.name.includes(q));
 
