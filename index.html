@@ -129,6 +129,7 @@ td.num { font-variant-numeric: tabular-nums; }
   color: var(--critical); font-weight: 650; font-size: .78rem;
 }
 .muted { color: var(--text-muted); }
+.up { color: var(--critical); font-size: .8em; }
 .hosp-link { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--text-muted); cursor: pointer; }
 
 footer { color: var(--text-muted); font-size: .76rem; margin-top: 28px; }
@@ -169,6 +170,7 @@ footer a { color: var(--text-secondary); }
         <th data-k="see">等看診</th>
         <th data-k="bed">推床 *</th>
         <th data-k="admit">等住院 <span class="arr">▼</span></th>
+        <th data-k="admit30" id="a30Head" title="近 30 天等住院中位數">等住院<br>30天中位 ‡</th>
         <th data-k="icu">等 ICU</th>
         <th data-k="full">119 滿床</th>
         <th data-k="b48" id="b48Head">暫留逾48h比率 †</th>
@@ -177,6 +179,7 @@ footer a { color: var(--text-secondary); }
     </table>
   </div>
   <p class="desc" style="margin-top:8px">* 推床數各院填報標準不一，實務上不可靠，僅供參考。空白（—）表示該院該欄未回報。</p>
+  <p class="desc" id="a30Note">‡ 近 30 天（有資料的日期）所有快照的等住院人數中位數；滑鼠停留可見 P90 與快照數。目前值高於 30 天 P90 時以 ▲ 標示。</p>
   <p class="desc" id="b48Note">† 健保署醫療品質指標「急診轉住院暫留急診超過四十八小時案件比率」（季資料）。— 表示無資料或與總院合併申報；<strong>粗體</strong>為高於全國平均。</p>
 </div>
 
@@ -254,6 +257,7 @@ const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(
 const state = {
   latest: null,        // data/latest.json
   boarding: null,      // data/boarding48.json（季指標：暫留逾48小時比率）
+  stats30: null,       // data/stats30.json（各院近 30 天等住院中位數 / P90）
   days: [],            // available day strings
   dayCache: new Map(), // date -> day file json
   rangeHours: 72,
@@ -477,7 +481,8 @@ function renderTable() {
   let rows = Object.keys(hosp).map(hid => {
     const [see, bed, admit, icu, full] = d[hid] || [null,null,null,null,0];
     const b = state.boarding?.rates?.[hid];
-    return { hid, name: hosp[hid].n, areaCode: hosp[hid].a, area: AREA_NAMES[hosp[hid].a] || hosp[hid].a,
+    const a30 = state.stats30?.admit?.[hid];
+    return { admit30: a30 ? a30.m : null, a30p90: a30?.p90, a30n: a30?.n, hid, name: hosp[hid].n, areaCode: hosp[hid].a, area: AREA_NAMES[hosp[hid].a] || hosp[hid].a,
              typeCode: hosp[hid].t, type: TYPE_NAMES[hosp[hid].t] || "?", see, bed, admit, icu, full,
              b48: b ? b.r : null, b48n: b?.n, b48d: b?.d };
   });
@@ -501,7 +506,9 @@ function renderTable() {
       <td>${r.type}</td>
       <td class="num">${num(r.see)}</td>
       <td class="num muted">${num(r.bed)}</td>
-      <td class="num"><strong>${num(r.admit)}</strong></td>
+      <td class="num"><strong>${num(r.admit)}</strong>${
+        r.admit != null && r.a30p90 != null && r.admit > r.a30p90 ? ' <span class="up" title="高於近 30 天 P90">▲</span>' : ""}</td>
+      <td class="num muted" ${r.a30n ? `title="P90 ${r.a30p90} · ${r.a30n} 個快照"` : ""}>${num(r.admit30)}</td>
       <td class="num">${num(r.icu)}</td>
       <td>${r.full ? '<span class="badge119">🔴 已通報</span>' : ""}</td>
       <td class="num" ${r.b48n ? `title="${r.b48n}/${r.b48d} 件"` : ""}>${
@@ -598,11 +605,17 @@ async function init() {
     [state.days] = await Promise.all([
       fetchJSON("data/days.json"),
       fetchJSON("data/boarding48.json").then(b => { state.boarding = b; }).catch(() => {}),
+      fetchJSON("data/stats30.json").then(t => { state.stats30 = t; }).catch(() => {}),
       loadLatest(),
     ]);
   } catch (e) {
     document.getElementById("updated").textContent = "資料載入失敗：" + e.message;
     return;
+  }
+  if (state.stats30?.from) {
+    const md = s => s.slice(5).replace("-", "/");
+    document.getElementById("a30Note").textContent =
+      `‡ ${md(state.stats30.from)}–${md(state.stats30.to)}（${state.stats30.days} 天）所有快照的等住院人數中位數；滑鼠停留可見 P90 與快照數。目前值高於 30 天 P90 時以 ▲ 標示。`;
   }
   if (state.boarding) {
     document.getElementById("b48Head").innerHTML = `暫留逾48h比率（${state.boarding.quarter}）†`;

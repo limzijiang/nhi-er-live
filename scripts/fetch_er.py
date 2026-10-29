@@ -113,6 +113,43 @@ def main():
     days = sorted(p.stem for p in HISTORY_DIR.glob("*.json"))
     (DATA_DIR / "days.json").write_text(json.dumps(days), encoding="utf-8")
 
+    write_stats30(days)
+
+
+def quantile(vals, p):
+    vals = sorted(vals)
+    if not vals:
+        return None
+    i = (len(vals) - 1) * p
+    lo = int(i)
+    hi = min(lo + 1, len(vals) - 1)
+    return round(vals[lo] + (vals[hi] - vals[lo]) * (i - lo), 1)
+
+
+def write_stats30(days):
+    """近 30 個有資料的日期內，各院「等住院」中位數與 P90，寫入 data/stats30.json。"""
+    window = days[-30:]
+    admit = {}
+    for d in window:
+        data = json.loads((HISTORY_DIR / f"{d}.json").read_text(encoding="utf-8"))
+        for s in data["snaps"]:
+            for hid, v in s["d"].items():
+                if v[2] is not None:
+                    admit.setdefault(hid, []).append(v[2])
+    stats = {
+        hid: {"m": quantile(vals, 0.5), "p90": quantile(vals, 0.9), "n": len(vals)}
+        for hid, vals in admit.items()
+    }
+    (DATA_DIR / "stats30.json").write_text(
+        json.dumps(
+            {"from": window[0] if window else None, "to": window[-1] if window else None,
+             "days": len(window), "admit": stats},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
 
 if __name__ == "__main__":
     sys.exit(main())
